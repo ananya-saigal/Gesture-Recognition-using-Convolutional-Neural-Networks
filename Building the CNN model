@@ -1,0 +1,299 @@
+import torch
+import numpy as np
+import os
+from sklearn.model_selection import train_test_split
+import torch.nn as nn
+import torch.nn.functional as F
+import matplotlib.pyplot as plt
+import random
+import torch.optim as optim
+import torchvision
+import torchvision.transforms as transforms
+from torchvision import datasets
+from torch.utils.data.sampler import SubsetRandomSampler
+from torch.utils.data import DataLoader,Subset
+from google.colab import drive
+drive.mount('/content/gdrive')
+
+#To Enable GPU Usage
+use_cuda = True
+path='/content/gdrive/MyDrive/Lab3 Dataset/Lab3_Gestures_Summer'
+
+#Resizing images to a fixed size like 224x224 is a preprocessing step when working with CNNs
+transform = transforms.Compose([transforms.Resize((224,224)),
+                                transforms.ToTensor()])
+dataset = datasets.ImageFolder(path, transform=transform)
+num_samples = len(dataset)
+print("Sample size", num_samples)
+indices = list(range(num_samples))
+random.shuffle(indices)  # Shuffle the indices
+
+# Split the dataset- 60% train, 20% val, 20% test
+split1 = int(0.6 * num_samples) #boundary between the training and validation sets.
+split2 = int(0.8 * num_samples) #boundary between the validation and test sets.
+
+train_indices = indices[:split1]
+val_indices = indices[split1:split2] #80%-60%=20%
+test_indices = indices[split2:]#110%-8%=20%
+
+# Create samplers for training, validation, and test sets
+train_sampler = SubsetRandomSampler(train_indices)
+val_sampler = SubsetRandomSampler(val_indices)
+test_sampler = SubsetRandomSampler(test_indices)
+
+# Define dataloaders for training, validation, and test sets
+batch_size = 35
+num_workers = 1  # Number of subprocesses to use for data loading is 1 one subprocess for loading data.
+
+# create iterators that provide batches of data during training, validation, or testing.
+train_loader = DataLoader(dataset, batch_size=batch_size, sampler=train_sampler, num_workers=num_workers)
+val_loader = DataLoader(dataset, batch_size=batch_size, sampler=val_sampler, num_workers=num_workers)
+test_loader = DataLoader(dataset, batch_size=batch_size, sampler=test_sampler, num_workers=num_workers)
+train_dataset = DataLoader(dataset, sampler=train_sampler)
+# classes are folders in each directory with these names
+classes = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I']
+
+# Print out some data stats
+print('Num training images:', len(train_indices))
+print('Num validation images:', len(val_indices))
+print('Num test images:', len(test_indices))
+
+# obtain one batch of training images
+dataiter = iter(train_loader)
+images, labels = next(dataiter)
+images = images.numpy() # convert images to numpy for display
+
+# plot the images in the batch, along with the corresponding labels
+fig = plt.figure(figsize=(25, 10))
+for idx in np.arange(20):
+    ax = fig.add_subplot(2, 10, idx+1, xticks=[], yticks=[])
+    plt.imshow(np.transpose(images[idx], (1, 2, 0)))
+    ax.set_title(classes[labels[idx]])
+#Total Parameters = Number of channels × Height × Width= 3 × 224 × 224 = 150,528 parameters
+torch.manual_seed(1) # set the random seed
+#Convolutional Neural Network Architecture
+class CNN_MNISTClassifier(nn.Module):
+    def __init__(self):
+        super(CNN_MNISTClassifier, self).__init__()
+        self.conv1 = nn.Conv2d(3, 5, 5)#in_channels(RGB so 3 chanels), out_chanels, kernel_size
+        #Max-pooling layers are used in CNNs to reduce computation and controlling overfitting .
+        self.pool = nn.MaxPool2d(2, 2) #kernel_size, stride
+        self.conv2 = nn.Conv2d(5, 10, 5) #in_channels, out_chanels, kernel_size
+        self.conv3 = nn.Conv2d(10, 25,5)
+
+        #Computing the correct input size for FC1:
+         #[(224-5)/1]+1=220 (convolution layer with kernel size 5 and stride 1)
+        #max pooling= (220 - 2)/2 + 1=110
+        #[(110-5)/1]+1=106 (convolution layer with kernel size 5 and stride 1)
+        #max pooling= (106 - 2)/2 + 1 = 53
+        # [(53-5)/1]+1=49
+        self.fc1 = nn.Linear(25*49*49, 32)
+        self.fc2 = nn.Linear(32, 9) # output neurons for 9 classes
+    def forward(self, x):
+        x = self.pool(F.relu(self.conv1(x)))
+        x = self.pool(F.relu(self.conv2(x)))
+        x = F.relu(self.conv3(x))
+        x = x.view(-1, 25 * 49 * 49)  # Flattening the tensor
+        x = F.relu(self.fc1(x))
+        x = self.fc2(x)
+        return x
+
+#Training Code 
+def get_accuracy(model, data_loader):
+    correct = 0
+    total = 0
+
+    for images, labels in iter(data_loader):
+      if torch.cuda.is_available():
+        images = images.cuda()
+        labels = labels.cuda()
+        model.cuda()
+
+    output = model(images)
+
+    prediction = output.max(1, keepdim = True)[1]
+    correct += prediction.eq(labels.view_as(prediction)).sum().item()
+    total += images.shape[0]
+
+    return correct/total
+
+def train(model, train_loader,val_loader, batch_size=64, num_epochs=10, learn_rate=0.01):
+    torch.manual_seed(1)
+    criterion = nn.CrossEntropyLoss()
+    optimizer = optim.Adam(model.parameters(), lr=learn_rate)
+
+   # train_loader = torch.utils.data.DataLoader(train_loader, batch_size=batch_size, shuffle=True)
+   # val_loader = torch.utils.data.DataLoader(val_loader, batch_size=batch_size, shuffle=True)
+    iters, losses, train_acc, val_acc = [], [], [], [] # Initialize lists before use
+    # training
+    print ("Training Started...")
+    n = 0 # the number of iterations
+    for epoch in range(num_epochs):
+        for imgs, labels in iter(train_loader):
+
+
+            #############################################
+            #To Enable GPU Usage
+            if use_cuda and torch.cuda.is_available():
+              imgs = imgs.cuda()
+              labels = labels.cuda()
+            #############################################
+
+            print(labels)
+            out = model(imgs)             # forward pass
+            loss = criterion(out, labels) # compute the total loss
+            loss.backward()               # backward pass (compute parameter updates)
+            optimizer.step()              # make the updates for each parameter
+            optimizer.zero_grad()         # a clean up step for PyTorch
+
+            # save the current training information
+            iters.append(n)
+            losses.append(float(loss)/batch_size)             # compute *average* loss
+            train_acc.append(get_accuracy(model, train_loader)) # compute training accuracy
+            val_acc.append(get_accuracy(model, val_loader))  # compute validation accuracy
+            n += 1
+
+    # plotting
+    plt.title("Training Curve")
+    plt.plot(iters, losses, label="Train")
+    plt.xlabel("Iterations")
+    plt.ylabel("Loss")
+    plt.show()
+
+    plt.title("Training Curve")
+    plt.plot(iters, train_acc, label="Train")
+    plt.plot(iters, val_acc, label="Validation")
+    plt.xlabel("Iterations")
+    plt.ylabel("Training Accuracy")
+    plt.legend(loc='best')
+    plt.show()
+
+    print("Final Training Accuracy: {}".format(train_acc[-1]))
+    print("Final Validation Accuracy: {}".format(val_acc[-1]))
+
+
+#One way to sanity check our neural network model and training code is to check whether the model is capable of “overfitting” or “memorizing” a small dataset.
+#A properly constructed CNN with correct training code should be able to memorize the answers to a small number of images quickly.
+# Create a small subset from the dataset using the first N indices
+small_subset = Subset(dataset, list(range(30)))
+small_loader = DataLoader(small_subset, batch_size=10, shuffle=True, num_workers=1)
+model = CNN_MNISTClassifier()
+torch.manual_seed(1)
+criterion = nn.CrossEntropyLoss()
+optimizer = optim.Adam(model.parameters(), lr=0.01)
+use_cuda = torch.cuda.is_available()
+if use_cuda:
+    model = model.cuda()
+
+# Training parameters
+batch_size = 10  # Batch size set to the entire small dataset size
+num_epochs = 200
+learning_rate = 0.01
+iters, losses, train_acc, val_acc = 0, [], [], []
+
+for images, labels in iter(small_loader):
+    if torch.cuda.is_available():
+        images = images.cuda()
+        labels = labels.cuda()
+        model.cuda()
+    output = model(images)
+    train_acc.append(get_accuracy(model, small_loader))
+    print('Epoch: ',  -1, 'Training Accuracy: ', train_acc[-1])
+
+for epoch in range(200):
+  for images, labels in iter(small_loader):
+    if torch.cuda.is_available():
+      images = images.cuda()
+      labels = labels.cuda()
+      model.cuda()
+    output = model(images)
+    loss = criterion(output, labels)
+    loss.backward()
+    optimizer.step()
+    optimizer.zero_grad()
+
+    iters += 1
+  train_acc.append(get_accuracy(model, small_loader))
+  losses.append(float(loss)/27)
+  print('Epoch: ', epoch, 'Training Accuracy: ', train_acc[-1])
+
+#Hyperparameter Search:
+    #Based on Convolutional layer kernel size, epochs, learning Rate
+
+# experiment with the hyperparameters listed in Part a to find the best combination for your model
+# Trying batch size of 27, epochs being 5(half of before), learn rate=0.001 to see how it performs
+use_cuda = True
+first_model = CNN_MNISTClassifier()
+if use_cuda and torch.cuda.is_available():
+  first_model.cuda()
+  print('CUDA is available!  Training on GPU ...')
+else:
+  print('CUDA is not available.  Training on CPU ...')
+
+#proper model 1
+train(first_model, train_loader,val_loader, batch_size=27, num_epochs=5, learn_rate=0.001)
+
+#second model, expirimating with increasing epochs and learning model from last model.
+#Epoch= 20 and Learning rate= 0.01
+use_cuda = True
+
+second_model = CNN_MNISTClassifier()
+if use_cuda and torch.cuda.is_available():
+  second_model.cuda()
+  print('CUDA is available!  Training on GPU ...')
+else:
+  print('CUDA is not available.  Training on CPU ...')
+
+#proper model 2
+train(second_model, train_loader,val_loader, batch_size=27, num_epochs=20, learn_rate=0.01)
+
+#This model expirements with learning rate and epochs in between the first and second model
+use_cuda = True
+
+third_model = CNN_MNISTClassifier()
+if use_cuda and torch.cuda.is_available():
+  third_model.cuda()
+  print('CUDA is available!  Training on GPU ...')
+else:
+  print('CUDA is not available.  Training on CPU ...')
+
+#proper model 3
+train(third_model, train_loader,val_loader, batch_size=27, num_epochs=10, learn_rate=0.005)
+
+#Optomimize the convolution layers based on past optomized values
+# Since the first model was the best, we will use those parameters
+
+class CNN_MNISTClassifier(nn.Module):
+     def __init__(self):
+        super(CNN_MNISTClassifier, self).__init__()
+        # Input channel = 3, output channel = 25, kernel size = 5
+        self.conv1 = nn.Conv2d(3, 25, 5)
+        # Kernel size and stride are both 2
+        self.pool = nn.MaxPool2d(2, 2)
+        # Input channel = 25, output channel = 5, kernel size = 5
+        self.conv2 = nn.Conv2d(25,30, 5)
+        # Input features = 30×53×53, output features = 30
+        self.fc1 = nn.Linear(30*53*53, 30)
+        # Input features = 32, output features = 9
+        self.fc2 = nn.Linear(30, 9)
+
+     def forward(self, x):
+        x = self.pool(F.relu(self.conv1(x)))
+        x = self.pool(F.relu(self.conv2(x)))
+        x = x.view(-1, 30*53*53)
+        x = F.relu(self.fc1(x))
+        x = self.fc2(x)
+        return x
+
+
+fourth_model = CNN_MNISTClassifier()
+
+if torch.cuda.is_available():
+  fourth_model.cuda()
+  print('We are utilizing the GPU')
+else:
+  print('We are not utilizing the GPU')
+train(fourth_model, train_loader,val_loader,batch_size=27, num_epochs=5, learn_rate=0.001)
+
+#The best model is my first model. The hyperparameters used were a batch size of 27, num_epochs=5, learn_rate=0.001 and 3 convolution layers. 
+#The highest training accuracy achieved was 85.71% and the highest validation accuracy it achieved was 69.23%
