@@ -1,1 +1,93 @@
+# Load the AlexNet network, with pretrained weights
+import torchvision.models
+alexnet = torchvision.models.alexnet(pretrained=True)
+import os
+import torch
+import torchvision.models
+import torchvision.transforms as transforms
+from torch.utils.data import DataLoader
 
+train_data_loader = DataLoader(dataset, batch_size=batch_size, sampler=train_sampler, num_workers=num_workers)
+val_data_loader = DataLoader(dataset, batch_size=batch_size, sampler=val_sampler, num_workers=num_workers)
+test_data_loader = DataLoader(dataset, batch_size=batch_size, sampler=test_sampler, num_workers=num_workers)
+
+# Class names
+classes = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I']
+
+# Load AlexNet model
+alexnet = torchvision.models.alexnet(pretrained=True)
+alexnet.eval()  # Set to evaluation mode
+
+# Function to save features
+def save_features(data_loader, set_name):
+    n = 0
+    for img, label in data_loader:
+        '''if use_cuda and torch.cuda.is_available():
+            img = img.cuda()
+            label = label.cuda()'''
+
+        with torch.no_grad():
+            features = alexnet.features(img)
+
+        features_tensor = features.cpu().squeeze(0)
+
+        # Extract the label value since batch size is 1, use label[0]
+        folder_name = os.path.join(features_path, set_name, classes[label[0].item()])
+        if not os.path.isdir(folder_name):
+            os.makedirs(folder_name)
+
+        torch.save(features_tensor, os.path.join(folder_name, f'{n}.tensor'))
+        n += 1
+
+# Save features for training, validation, and test sets
+features_path = '/content/drive/MyDrive/Colab Notebooks/APS360/Lab 3 Features'
+save_features(train_data_loader, 'train')
+save_features(val_data_loader, 'val')
+save_features(test_data_loader, 'test')
+
+# features = ... load precomputed alexnet.features(img) ...
+'''output = model(features)
+prob = F.softmax(output)'''
+train_features = torchvision.datasets.DatasetFolder(root=features_path + '/train', loader=torch.load, extensions=('.tensor'))
+validation_features = torchvision.datasets.DatasetFolder(root=features_path + '/val', loader=torch.load, extensions=('.tensor'))
+test_features = torchvision.datasets.DatasetFolder(root=features_path + '/test', loader=torch.load, extensions=('.tensor'))
+
+batch_size = 35
+num_workers = 1
+
+train_features_load = torch.utils.data.DataLoader(train_features, batch_size=batch_size, num_workers=num_workers, shuffle=True)
+validation_features_load = torch.utils.data.DataLoader(validation_features, batch_size=batch_size, num_workers=num_workers, shuffle=True)
+test_features_load = torch.utils.data.DataLoader(test_features, batch_size=batch_size, num_workers=num_workers, shuffle=True)
+
+torch.manual_seed(1) # set the random seed
+from math import floor
+
+class AlexNetClassifier(nn.Module):
+    def __init__(self, name = "AlexNet_Classifier"):
+        super(AlexNetClassifier, self).__init__()
+        #Input feature 256, output=512, kernal size=3
+        self.conv1 = nn.Conv2d(256, 512, 3)
+        self.pool = nn.MaxPool2d(2, 2)
+
+        # Computing the correct input size into the Fully Connected Layer
+        self.x = floor((6 - 3 + 1)/2)
+        self.FC_input = 512*self.x*self.x
+
+        self.fc1 = nn.Linear(self.FC_input, 20)
+        self.fc2 = nn.Linear(20, 9)
+
+        self.name = name
+
+    def forward(self, features):
+        x = self.pool(F.relu(self.conv1(features)))
+        x = x.view(-1, self.FC_input)
+        x = F.relu(self.fc1(x))
+        x = self.fc2(x)
+        return F.softmax(x, dim=1)
+# Train your new network, including any hyperparameter tuning
+Alex_NetCNN = AlexNetClassifier()
+
+if torch.cuda.is_available():
+  print('We are using the GPU')
+
+train(Alex_NetCNN, train_features_load, validation_features_load, batch_size=35, num_epochs=5, learn_rate=0.001)
